@@ -1,0 +1,44 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c
+assert.h
+-
+stdio.h
+-
+stdlib.h
+-
+unistd.h
+-
+string.h
+-
+sys/types.h
+-
+sys/socket.h
+-
+sys/param.h
+-
+sys/time.h
+-
+stdlib.h
+-
+getopt.h
+-
+arpa/inet.h
+-
+netdb.h
+-
+time.h
+-
+math.h
+-
+infiniband/verbs.h
+-
+sys/param.h
+-
+

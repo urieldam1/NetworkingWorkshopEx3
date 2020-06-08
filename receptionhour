@@ -1,0 +1,7 @@
+send and receive queue have final length.they are defined in tx_length and rx_length
+routs - short for receive outstanding.
+
+
+using only SEND - reciever should have receive by post_rcv
+
+server: init QP, registration,

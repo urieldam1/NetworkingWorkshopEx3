@@ -1,0 +1,1 @@
+/usr/bin/cc  -libverbs -g   CMakeFiles/ex2.dir/bw_template.c.o  -o ex2 
