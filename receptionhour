@@ -1,7 +1,24 @@
-send and receive queue have final length.they are defined in tx_length and rx_length
-routs - short for receive outstanding.
+
+1. פתיחת קונקשיין
+2. הסרבר לא יוזם כלום. רק הקליינט
+3. הסרבר מחכה להודעה -post recieve. (חלק ראשון). ברגע שהקליינט שולח הודעת PUT, הוא לא צריך לחכות לאישור שהכל בסדר מהסרבר.
+4. מימוש פעולת PUT, צריך לשלוח key,data, ואינפורמציה שאומרת שזה SET ולא GET
+5. פעולת GET - מחכים לתשובה של השרת, complition על תשובת השרת.
+6. הקליינט שולח לסרבר הודעה קטנה מ4kb. הסרבר מכין באפר בגודל 4kb, ההודעה תכתב בתחילת הבאפר ובקומפלישין כתוב מה כתוב ההודעה שהתקבלה בדיוק
+7. מערך של פויינטרים / map /
 
 
-using only SEND - reciever should have receive by post_rcv
 
-server: init QP, registration,
+שרת:
+1. פותח קונקשיין
+2. מחכה להודעות
+3. מייצר 128 באפרים , עושה לכולם post recieve
+4. עושה pull for completion -
+5. מטפל בכל בקשה שהתקבלה - האם היא SET או GET. מפרסרים את ההודעה כדי להשים אותה בDB
+6. עכשיו הוא פינה את הבאפר כי הוא העביר את ההודעה לDB
+
+גם בלקוח עושים regisration פעם אחת, ומעתיקים כל פעם את מה שאני רוצה להעביר.
+
+
+בקשת GET תמיד eager כי key קטן מ4KB.
+GET על משהו לא קיים - מחזיר סטרינג ריק.
