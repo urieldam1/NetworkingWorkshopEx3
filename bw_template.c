@@ -61,46 +61,15 @@ enum {
     PINGPONG_SEND_WRID = 2,
 };
 
-int EAGER_MAX_SIZE = 4096;
-int MAX_SIZE = 128 * 4096; // 2 ^ 20
-double MICRO_SEC = 1e6;
-int BYTE_TO_BIT = 8;
-int WARMUP_NUM_OF_SENDS = 5000;
-double CONVERGE = 0.01;
+#define BUFFER_MAP_SIZE 128
+#define EAGER_MAX_SIZE 4096
+#define MAX_SIZE  129 * 4096 // 128 for send, 1 for recv
+#define MICRO_SEC  1e6
+#define BYTE_TO_BIT  8
+#define WARMUP_NUM_OF_SENDS  5000
+#define CONVERGE  0.01
 
-
-/* A linked list node */
-struct Node
-{
-    // Any data type can be stored in this node
-    void  *data;
-    struct Node *next;
-};
-
-/* Function to add a node at the beginning of Linked List.
-   This function expects a pointer to the data to be added
-   and size of the data type */
-void push(struct Node** head_ref, void *new_data, size_t data_size)
-{
-    // Allocate memory for node
-    struct Node* new_node = (struct Node*)malloc(sizeof(struct Node));
-
-    new_node->data  = malloc(data_size);
-    new_node->next = (*head_ref);
-
-    // Copy contents of new_data to newly allocated memory.
-    // Assumption: char takes 1 byte.
-    int i;
-    for (i=0; i<data_size; i++)
-        *(char *)(new_node->data + i) = *(char *)(new_data + i);
-
-    // Change head pointer as new node is added at the beginning
-    (*head_ref)    = new_node;
-}
-
-struct Node AvailableBuffs;
-struct Node UsedBuffs;
-
+int bufferMap[BUFFER_MAP_SIZE] = {0};
 
 
 static int page_size;
@@ -568,9 +537,10 @@ int pp_close_ctx(struct pingpong_context *ctx) {
     return 0;
 }
 
-static int pp_post_recv(struct pingpong_context *ctx, int n, unsigned long ourSize) { //added unsigned long ourSize
+static int pp_post_recv(struct pingpong_context *ctx, void * buf, int n, unsigned long ourSize) { //added unsigned long ourSize
     struct ibv_sge list = {
-            .addr    = (uintptr_t) ctx->buf,
+//            .addr    = (uintptr_t) ctx->buf,
+            .addr    = (uintptr_t) buf,
 //            .length = ctx->size,
             .length = ourSize,
             .lkey    = ctx->mr->lkey
@@ -582,18 +552,17 @@ static int pp_post_recv(struct pingpong_context *ctx, int n, unsigned long ourSi
             .next       = NULL
     };
     struct ibv_recv_wr *bad_wr;
-    int i;
 
-    for (i = 0; i < n; ++i)
-        if (ibv_post_recv(ctx->qp, &wr, &bad_wr))
-            break;
+    if (ibv_post_recv(ctx->qp, &wr, &bad_wr))
+        return 1;
 
-    return i;
+    return 0;
 }
 
-static int pp_post_send(struct pingpong_context *ctx, unsigned long ourSize) { //added unsigned long ourSize
+static int pp_post_send(struct pingpong_context *ctx, void * buf, unsigned long ourSize) { //added unsigned long ourSize
     struct ibv_sge list = {
-            .addr    = (uint64_t) ctx->buf,
+//            .addr    = (uint64_t) ctx->buf,
+            .addr    = (uint64_t) buf,
 //            .length = ctx->size,
             .length = ourSize,
             .lkey    = ctx->mr->lkey
@@ -666,7 +635,7 @@ int pp_wait_completions(struct pingpong_context *ctx, int iters) {
 
 int serverGetMessages(struct pingpong_context *ctx, unsigned long ourSize, int iters) {
     pp_wait_completions(ctx, iters);
-    if (pp_post_send(ctx, ourSize)) {
+    if (pp_post_send(ctx, ctx->buf, ourSize)) {
         fprintf(stderr, "Server couldn't post send\n");
         return 1;
     }
@@ -688,7 +657,7 @@ __suseconds_t clientSendMessages(struct pingpong_context *ctx, int tx_depth, uns
 
     int i=0;
     for (i = 0; i < WC_BATCH; i++) { // send first tx_depth messages
-        if (pp_post_send(ctx, ourSize)) {  //// + 100
+        if (pp_post_send(ctx, ctx->buf, ourSize)) {  //// + 100
             fprintf(stderr, "Client couldn't post send\n");
             return -1;
         }
@@ -700,7 +669,7 @@ __suseconds_t clientSendMessages(struct pingpong_context *ctx, int tx_depth, uns
         compCount += currCount;
         for (int k = 0; k < currCount; k++) { // send first tx_depth messages
             if (i < iters) {
-                if (pp_post_send(ctx, ourSize)) {      ///// +10
+                if (pp_post_send(ctx, ctx->buf, ourSize)) {      ///// +10
                     fprintf(stderr, "Client couldn't post send\n");
                     return 1;
                 }
@@ -759,7 +728,7 @@ void warmUp(struct pingpong_context *ctx, int tx_depth, unsigned long ourSize, c
             secondTime = (double) clientSendMessages(ctx, tx_depth, ourSize, WARMUP_NUM_OF_SENDS);
         }
         memset(ctx->buf, 1, MAX_SIZE);
-        pp_post_send(ctx, 1);
+        pp_post_send(ctx, ctx->buf, 1);
         memset(ctx->buf, 0, MAX_SIZE);
         pp_wait_completions(ctx, 1);
     } else {
@@ -879,6 +848,93 @@ int kv_open(char * servername, void ** kv_handle){
     return 0;
 }
 
+
+int waitRecvCompletion(struct pingpong_context* ctx){
+    struct ibv_wc wc;
+    int ne;
+    do {
+        ne = ibv_poll_cq(ctx->cq, 1, &wc);
+        if (ne == 1) {
+            if (wc.wr_id < 128){
+                return wc.wr_id;
+            }
+            ne = 0;
+        }
+        else if (ne < 0){
+            fprintf(stderr, "poll CQ failed %d\n", ne);
+            return -1;
+        }
+
+    } while (ne < 1);
+}
+
+int getNextfreeBufNum(struct pingpong_context* ctx){
+    for(int i = 0; i < BUFFER_MAP_SIZE; i++)
+    {
+        if (bufferMap[i] == 0){
+            return i;
+        }
+    }
+    return waitRecvCompletion(ctx);
+}
+
+
+int HandleMsg(struct pingpong_context *ctx) {
+    struct msg *message = (struct msg *) ctx->buf;
+    enum msgType type = message->type;
+
+    switch (type) {
+        case EAGER_GET_REQUEST:
+            handle_eager_get_request(ctx);
+            break;
+        case EAGER_SET_REQUEST:
+            handle_eager_set_request(ctx);
+            break;
+        case RENDEZVOUS_GET_REQUEST:
+            handle_rendezvous_get_request(ctx);
+            break;
+        case RENDEZVOUS_SET_REQUEST:
+            handle_rendezvous_set_request(ctx);
+            break;
+        default:
+            fprintf(stderr, "packet type = %d\n", packet->type);
+            break;
+    }
+    return 0;
+}
+
+
+
+int serverLogic(struct pingpong_context *ctx) {
+    struct ibv_wc wc;
+    int n;
+    void * wantedBuff;
+    for (int i = 0; i < 100; i++) { //do 100 post receive
+        wantedBuff = (ctx->buf + (EAGER_MAX_SIZE * i));
+        pp_post_recv(ctx, wantedBuff, 1, MAX_SIZE);
+        bufferMap[i] = 1;
+    }
+
+    while (1) {
+
+        waitRecvCompletion(ctx);
+
+        if (wc.status != IBV_WC_SUCCESS) {
+            fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
+                    ibv_wc_status_str(wc.status),
+                    wc.status, (int) wc.wr_id);
+            return 1;
+        }
+
+        if ((int) wc.wr_id < 128) {
+            HandleMsg(ctx);
+            int nextFreeBuff = getNextfreeBufNum(ctx);
+            wantedBuff = (ctx->buf + (EAGER_MAX_SIZE * nextFreeBuff));
+            pp_post_recv(ctx, wantedBuff,1, MAX_SIZE);
+        }
+    }
+}
+
 /**
  *
  * @param kv_handle
@@ -888,12 +944,9 @@ int kv_open(char * servername, void ** kv_handle){
  */
 int kv_set(void *kv_handle, const char *key, const char *value){
     struct pingpong_context *ctx = (struct pingpong_context *) kv_handle;
-    struct msg *message = (struct msg *) ctx->buf;
+    int buffToUse = getNextfreeBufNum(kv_handle);
+    struct msg *message = (struct msg *) (ctx->buf + (EAGER_MAX_SIZE * buffToUse));
 
-
-//    if (cache_contains(key)) {
-//        key2remote_info.erase(key);
-//    }
     size_t keyLen = strlen(key) + 1;
     size_t valueLen = strlen(value) + 1;
     unsigned msgSize = sizeof(struct msg) + keyLen + valueLen ;
@@ -901,17 +954,11 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         message->type = EAGER_SET_REQUEST;
         strcpy((char *) (message + sizeof(message->type)), key);
         strcpy((char *) (message + sizeof(message->type) + keyLen), value);
-
-
-
-//        char *key_start_addr = (char *) &(message->eager_set_request.key_and_value);
-        char *value_start_addr = key_start_addr + key_len + 1;
-        strcpy(key_start_addr, key);
-        strcpy(value_start_addr, value);
-
-        pp_post_send(ctx, IBV_WR_SEND, msg_size, NULL, NULL, 0); /* Sends the packet to the server */
-        return pp_wait_completions(ctx, 1); /* await EAGER_SET_REQUEST completion */
+        pp_post_send(ctx, message, msgSize);
+        bufferMap[buffToUse] = 1; //make occupied
+        return 0;
     }
+
     else { //RENDEZ VOUZ
     }
 }
@@ -945,6 +992,7 @@ int main(int argc, char *argv[]) {
 //        printf("val is: %c", *val);
     }
 
+    // client puts a key value pair
     kv_set((void *) kv_handle, key, value);
 
 

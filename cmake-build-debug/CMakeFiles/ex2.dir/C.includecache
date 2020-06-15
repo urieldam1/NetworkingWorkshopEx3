@@ -6,16 +6,6 @@
 
 #IncludeRegexTransform: 
 
-/cs/usr/l33t/NetworkingWorkshopEx3/HashMap.c
-HashMap.h
-/cs/usr/l33t/NetworkingWorkshopEx3/HashMap.h
-stdlib.h
--
-stdio.h
--
-string.h
--
-
 /cs/usr/l33t/NetworkingWorkshopEx3/HashMap.h
 
 /cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c
@@ -51,8 +41,14 @@ math.h
 -
 infiniband/verbs.h
 -
+msgType.h
+/cs/usr/l33t/NetworkingWorkshopEx3/msgType.h
 sys/param.h
 -
 HashMap.h
 /cs/usr/l33t/NetworkingWorkshopEx3/HashMap.h
+
+/cs/usr/l33t/NetworkingWorkshopEx3/msgType.h
+stdint.h
+-
 
