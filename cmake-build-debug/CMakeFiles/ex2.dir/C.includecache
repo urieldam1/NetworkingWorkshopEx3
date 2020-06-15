@@ -43,6 +43,8 @@ infiniband/verbs.h
 -
 msgType.h
 /cs/usr/l33t/NetworkingWorkshopEx3/msgType.h
+HashMap.h
+/cs/usr/l33t/NetworkingWorkshopEx3/HashMap.h
 sys/param.h
 -
 HashMap.h

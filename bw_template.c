@@ -51,6 +51,7 @@
 #include <infiniband/verbs.h>
 
 #include "msgType.h"
+#include "HashMap.h"
 
 #define WC_BATCH (10)
 #define _GNU_SOURCE
@@ -70,7 +71,7 @@ enum {
 #define CONVERGE  0.01
 
 int bufferMap[BUFFER_MAP_SIZE] = {0};
-
+map_t serverMap;
 
 static int page_size;
 
@@ -610,7 +611,7 @@ int pp_wait_completions(struct pingpong_context *ctx, int iters) {
 
                 case PINGPONG_RECV_WRID:
                     if (--ctx->routs <= 10) {
-                        ctx->routs += pp_post_recv(ctx, ctx->rx_depth - ctx->routs, MAX_SIZE); //added MAX_SIZE
+                        ctx->routs += pp_post_recv(ctx, ctx->buf, ctx->rx_depth - ctx->routs, MAX_SIZE); //added MAX_SIZE
                         if (ctx->routs < ctx->rx_depth) {
                             fprintf(stderr,
                                     "Couldn't post receive (%d)\n",
@@ -792,12 +793,12 @@ int kv_open(char * servername, void ** kv_handle){
     if (!ctx)
         return 1;
 
-
-    ctx->routs = pp_post_recv(ctx, ctx->rx_depth, MAX_SIZE); // changed to MAX_SIZE
-    if (ctx->routs < ctx->rx_depth) {
-        fprintf(stderr, "Couldn't post receive (%d)\n", ctx->routs);
-        return 1;
-    }
+//
+//    ctx->routs = pp_post_recv(ctx, ctx->buf, ctx->rx_depth, MAX_SIZE); // changed to MAX_SIZE
+//    if (ctx->routs < ctx->rx_depth) {
+//        fprintf(stderr, "Couldn't post receive (%d)\n", ctx->routs);
+//        return 1;
+//    }
 
     if (pp_get_port_info(ctx->context, ib_port, &ctx->portinfo)) {
         fprintf(stderr, "Couldn't get port info\n");
@@ -849,14 +850,13 @@ int kv_open(char * servername, void ** kv_handle){
 }
 
 
-int waitRecvCompletion(struct pingpong_context* ctx){
-    struct ibv_wc wc;
+int waitRecvCompletion(struct pingpong_context* ctx, struct ibv_wc * wc){
     int ne;
     do {
-        ne = ibv_poll_cq(ctx->cq, 1, &wc);
+        ne = ibv_poll_cq(ctx->cq, 1, wc);
         if (ne == 1) {
-            if (wc.wr_id < 128){
-                return wc.wr_id;
+            if (wc->wr_id < 128){
+                return wc->wr_id;
             }
             ne = 0;
         }
@@ -869,13 +869,44 @@ int waitRecvCompletion(struct pingpong_context* ctx){
 }
 
 int getNextfreeBufNum(struct pingpong_context* ctx){
+    struct ibv_wc wc;
     for(int i = 0; i < BUFFER_MAP_SIZE; i++)
     {
         if (bufferMap[i] == 0){
             return i;
         }
     }
-    return waitRecvCompletion(ctx);
+    return waitRecvCompletion(ctx, &wc);
+}
+
+
+
+
+//int handleGetEagerReq(struct pingpong_context *ctx) {
+//    struct msg *message = (struct msg *) ctx->buf;
+//    char *key = (char *) &(message->key);
+//    size_t lenKey = strlen(key);
+//    return send_value_to_client(ctx, key, lenKey);
+//}
+
+
+int handleSetEagerReq(struct pingpong_context *ctx) {
+    struct msg *message = (struct msg *) ctx->buf;
+    char *key = (char *) &(message->key);
+    size_t lenKey = strlen(key) + 1;
+    char *value = key + lenKey;
+    size_t lenValue = strlen(value) + 1;
+    int buffSize = lenKey + lenValue;
+    void *buf = malloc(buffSize);
+
+    strcpy((char *) buf, key);
+    strcpy((char *) buf + lenKey, value);
+
+    hashmap_put(serverMap, buf, buf + lenKey);
+    printf("key is : %s\n", buf);
+    printf("value is : %s\n", buf + lenKey);
+
+    return 0;
 }
 
 
@@ -884,20 +915,20 @@ int HandleMsg(struct pingpong_context *ctx) {
     enum msgType type = message->type;
 
     switch (type) {
-        case EAGER_GET_REQUEST:
-            handle_eager_get_request(ctx);
-            break;
+//        case EAGER_GET_REQUEST:
+//            handleGetEagerReq(ctx);
+//            break;
         case EAGER_SET_REQUEST:
-            handle_eager_set_request(ctx);
+            handleSetEagerReq(ctx);
             break;
-        case RENDEZVOUS_GET_REQUEST:
-            handle_rendezvous_get_request(ctx);
-            break;
-        case RENDEZVOUS_SET_REQUEST:
-            handle_rendezvous_set_request(ctx);
-            break;
+//        case RENDEZVOUS_GET_REQUEST:
+//            handle_rendezvous_get_request(ctx);
+//            break;
+//        case RENDEZVOUS_SET_REQUEST:
+//            handle_rendezvous_set_request(ctx);
+//            break;
         default:
-            fprintf(stderr, "packet type = %d\n", packet->type);
+            fprintf(stderr, "packet type = %d\n", message->type);
             break;
     }
     return 0;
@@ -917,7 +948,7 @@ int serverLogic(struct pingpong_context *ctx) {
 
     while (1) {
 
-        waitRecvCompletion(ctx);
+        waitRecvCompletion(ctx, &wc);
 
         if (wc.status != IBV_WC_SUCCESS) {
             fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
@@ -952,8 +983,11 @@ int kv_set(void *kv_handle, const char *key, const char *value){
     unsigned msgSize = sizeof(struct msg) + keyLen + valueLen ;
     if (msgSize <= EAGER_MAX_SIZE) { //eager
         message->type = EAGER_SET_REQUEST;
-        strcpy((char *) (message + sizeof(message->type)), key);
-        strcpy((char *) (message + sizeof(message->type) + keyLen), value);
+        strcpy((char *) &(message->key), key);
+//        strcpy((char *) (message + sizeof(message->type) + keyLen), value);
+        strcpy((char *) &(message->value), value);
+//        printf("key is : %s\n", message->key);
+//        printf("value is : %s\n", message->value);
         pp_post_send(ctx, message, msgSize);
         bufferMap[buffToUse] = 1; //make occupied
         return 0;
@@ -968,11 +1002,10 @@ int main(int argc, char *argv[]) {
     struct pingpong_context * kv_handle;
     //get servername
     char * servername = NULL;
-    map_t mymap;
-    char * key = "0";
+    char * key = "Ex 3 rules Badouk";
     char * v = "1";
     char * val;
-    char * value = "8";
+    char * value = "Gil the king";
     if (optind == argc - 1)
         servername = strdup(argv[optind]);
     else if (optind < argc) {
@@ -986,45 +1019,14 @@ int main(int argc, char *argv[]) {
     }
 
     if (!servername) {
-        mymap = hashmap_new();
-//        hashmap_put(mymap, key, v);
-//        hashmap_get(mymap, key, &val);
-//        printf("val is: %c", *val);
+        serverMap = hashmap_new();
+        serverLogic(kv_handle);
+    }
+    else {
+        // client puts a key value pair
+        kv_set((void *) kv_handle, key, value);
     }
 
-    // client puts a key value pair
-    kv_set((void *) kv_handle, key, value);
-
-
-
-    // for every size:
-    //1. init buffer + memset
-    //2. warmup
-    //3. test (on same buffer)
-    unsigned long ourSize = 1;
-    long long usec;
-
-    for (int j = 0; j < 10; j++) {
-
-        simpleWarmUp(kv_handle, 100, ourSize, servername);
-        if (servername) { //client code
-
-
-            usec = clientSendMessages(kv_handle, 100, ourSize, ITERS);
-            unsigned long total_bit = ourSize * ITERS * BYTE_TO_BIT;
-            unsigned long throughput = total_bit / usec;
-            if (usec < 0) {
-                printf("Error in client send message func");
-            }
-
-            printf("%lu\t%lu\tMbps\n", ourSize, throughput);
-            fflush(stdout);
-        } else { // server code
-
-            serverGetMessages(kv_handle, ourSize, ITERS);
-        }
-        ourSize *= 2;
-    }
 
     return 0;
 }
