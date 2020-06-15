@@ -50,6 +50,8 @@
 
 #include <infiniband/verbs.h>
 
+#include "msgType.h"
+
 #define WC_BATCH (10)
 #define _GNU_SOURCE
 #define ITERS 5555
@@ -59,11 +61,46 @@ enum {
     PINGPONG_SEND_WRID = 2,
 };
 
+int EAGER_MAX_SIZE = 4096;
 int MAX_SIZE = 128 * 4096; // 2 ^ 20
 double MICRO_SEC = 1e6;
 int BYTE_TO_BIT = 8;
 int WARMUP_NUM_OF_SENDS = 5000;
 double CONVERGE = 0.01;
+
+
+/* A linked list node */
+struct Node
+{
+    // Any data type can be stored in this node
+    void  *data;
+    struct Node *next;
+};
+
+/* Function to add a node at the beginning of Linked List.
+   This function expects a pointer to the data to be added
+   and size of the data type */
+void push(struct Node** head_ref, void *new_data, size_t data_size)
+{
+    // Allocate memory for node
+    struct Node* new_node = (struct Node*)malloc(sizeof(struct Node));
+
+    new_node->data  = malloc(data_size);
+    new_node->next = (*head_ref);
+
+    // Copy contents of new_data to newly allocated memory.
+    // Assumption: char takes 1 byte.
+    int i;
+    for (i=0; i<data_size; i++)
+        *(char *)(new_node->data + i) = *(char *)(new_data + i);
+
+    // Change head pointer as new node is added at the beginning
+    (*head_ref)    = new_node;
+}
+
+struct Node AvailableBuffs;
+struct Node UsedBuffs;
+
 
 
 static int page_size;
@@ -850,7 +887,33 @@ int kv_open(char * servername, void ** kv_handle){
  * @return
  */
 int kv_set(void *kv_handle, const char *key, const char *value){
+    struct pingpong_context *ctx = (struct pingpong_context *) kv_handle;
+    struct msg *message = (struct msg *) ctx->buf;
 
+
+//    if (cache_contains(key)) {
+//        key2remote_info.erase(key);
+//    }
+    size_t keyLen = strlen(key) + 1;
+    size_t valueLen = strlen(value) + 1;
+    unsigned msgSize = sizeof(struct msg) + keyLen + valueLen ;
+    if (msgSize <= EAGER_MAX_SIZE) { //eager
+        message->type = EAGER_SET_REQUEST;
+        strcpy((char *) (message + sizeof(message->type)), key);
+        strcpy((char *) (message + sizeof(message->type) + keyLen), value);
+
+
+
+//        char *key_start_addr = (char *) &(message->eager_set_request.key_and_value);
+        char *value_start_addr = key_start_addr + key_len + 1;
+        strcpy(key_start_addr, key);
+        strcpy(value_start_addr, value);
+
+        pp_post_send(ctx, IBV_WR_SEND, msg_size, NULL, NULL, 0); /* Sends the packet to the server */
+        return pp_wait_completions(ctx, 1); /* await EAGER_SET_REQUEST completion */
+    }
+    else { //RENDEZ VOUZ
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -862,6 +925,7 @@ int main(int argc, char *argv[]) {
     char * key = "0";
     char * v = "1";
     char * val;
+    char * value = "8";
     if (optind == argc - 1)
         servername = strdup(argv[optind]);
     else if (optind < argc) {
@@ -874,14 +938,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (!servername){
+    if (!servername) {
         mymap = hashmap_new();
-        hashmap_put(mymap, key, v);
-        hashmap_get(mymap, key, &val);
-        printf("val is: %c", *val);
+//        hashmap_put(mymap, key, v);
+//        hashmap_get(mymap, key, &val);
+//        printf("val is: %c", *val);
     }
 
-//    int kv_set(void *kv_handle, const char *key, const char *value);
+    kv_set((void *) kv_handle, key, value);
 
 
 
