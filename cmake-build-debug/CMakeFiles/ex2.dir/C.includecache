@@ -6,7 +6,9 @@
 
 #IncludeRegexTransform: 
 
-/cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c
+/cs/usr/l33t/stam/NetworkingWorkshopEx3/HashMap.h
+
+/cs/usr/l33t/stam/NetworkingWorkshopEx3/bw_template.c
 assert.h
 -
 stdio.h
@@ -41,4 +43,6 @@ infiniband/verbs.h
 -
 sys/param.h
 -
+HashMap.h
+/cs/usr/l33t/stam/NetworkingWorkshopEx3/HashMap.h
 

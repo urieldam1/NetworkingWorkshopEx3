@@ -1,3 +1,3 @@
-/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/ex2.dir
-/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/edit_cache.dir
+/cs/usr/l33t/stam/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/cs/usr/l33t/stam/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/ex2.dir
+/cs/usr/l33t/stam/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/edit_cache.dir

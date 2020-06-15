@@ -48,10 +48,10 @@ RM = /usr/local/APP/jetbrains/clion/2019.2.1/bin/cmake/linux/bin/cmake -E remove
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /cs/usr/l33t/NetworkingWorkshopEx3
+CMAKE_SOURCE_DIR = /cs/usr/l33t/stam/NetworkingWorkshopEx3
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug
+CMAKE_BINARY_DIR = /cs/usr/l33t/stam/NetworkingWorkshopEx3/cmake-build-debug
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -80,9 +80,9 @@ edit_cache/fast: edit_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles /cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /cs/usr/l33t/stam/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles /cs/usr/l33t/stam/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/progress.marks
 	$(MAKE) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /cs/usr/l33t/stam/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -123,6 +123,33 @@ ex2/fast:
 	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/build
 .PHONY : ex2/fast
 
+HashMap.o: HashMap.c.o
+
+.PHONY : HashMap.o
+
+# target to build an object file
+HashMap.c.o:
+	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/HashMap.c.o
+.PHONY : HashMap.c.o
+
+HashMap.i: HashMap.c.i
+
+.PHONY : HashMap.i
+
+# target to preprocess a source file
+HashMap.c.i:
+	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/HashMap.c.i
+.PHONY : HashMap.c.i
+
+HashMap.s: HashMap.c.s
+
+.PHONY : HashMap.s
+
+# target to generate assembly for a file
+HashMap.c.s:
+	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/HashMap.c.s
+.PHONY : HashMap.c.s
+
 bw_template.o: bw_template.c.o
 
 .PHONY : bw_template.o
@@ -159,6 +186,9 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... ex2"
 	@echo "... edit_cache"
+	@echo "... HashMap.o"
+	@echo "... HashMap.i"
+	@echo "... HashMap.s"
 	@echo "... bw_template.o"
 	@echo "... bw_template.i"
 	@echo "... bw_template.s"
