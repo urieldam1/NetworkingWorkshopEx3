@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 enum msgType {
-    EAGER_GET_REQUEST,
-    EAGER_GET_RESPONSE,
-    EAGER_SET_REQUEST,
+    EAGER_GET_REQUEST = 1,
+    EAGER_GET_RESPONSE = 2 ,
+    EAGER_SET_REQUEST = 3,
     EAGER_SET_RESPONSE,
     RENDEZVOUS_GET_REQUEST,
     RENDEZVOUS_GET_RESPONSE,
@@ -18,11 +18,11 @@ enum msgType {
     RENDEZVOUS_SET_RESPONSE
 };
 
-struct msg{
-    enum msgType type;
-    const char* key;
-    const char* value;
-};
+//struct msg{
+//    enum msgType type;
+//    const char* key;
+//    const char* value;
+//};
 
 
 
