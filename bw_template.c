@@ -63,7 +63,7 @@ enum {
 };
 
 #define BUFFER_MAP_SIZE 128
-#define EAGER_MAX_SIZE 4096
+#define EAGER_MAX_SIZE 4096 // TODO: +20 ??
 #define MAX_SIZE  129 * 4096 // 128 for send, 1 for recv
 #define MICRO_SEC  1e6
 #define BYTE_TO_BIT  8
@@ -72,6 +72,7 @@ enum {
 
 int bufferMap[BUFFER_MAP_SIZE] = {0};
 map_t serverMap;
+map_t valuePointerToMr; // contains pairs of values and their memory region (for rendez-vous)
 
 static int page_size;
 
@@ -538,7 +539,9 @@ int pp_close_ctx(struct pingpong_context *ctx) {
     return 0;
 }
 
+
 static int pp_post_recv(struct pingpong_context *ctx, void * buf, unsigned long ourSize, int id) { //added unsigned long ourSize
+
     struct ibv_sge list = {
 //            .addr    = (uintptr_t) ctx->buf,
             .addr    = (uintptr_t) buf,
@@ -560,20 +563,21 @@ static int pp_post_recv(struct pingpong_context *ctx, void * buf, unsigned long 
     return 0;
 }
 
-static int pp_post_send(struct pingpong_context *ctx, void * buf, unsigned long ourSize, int id) { //added unsigned long ourSize
+static int pp_post_send(struct pingpong_context *ctx, void * buf, unsigned long ourSize, int id,
+                        enum ibv_wr_opcode opcode, struct ibv_mr *mr) { //added unsigned long ourSize
+
     struct ibv_sge list = {
-//            .addr    = (uint64_t) ctx->buf,
-            .addr    = (uint64_t) buf,
-//            .length = ctx->size,
+
+            .addr   = (uintptr_t) (mr ? mr->addr : buf),
             .length = ourSize,
-            .lkey    = ctx->mr->lkey
+            .lkey    =  mr ? mr->lkey : ctx->mr->lkey,
     };
 
     struct ibv_send_wr *bad_wr, wr = {
             .wr_id        = id,
             .sg_list    = &list,
             .num_sge    = 1,
-            .opcode     = IBV_WR_SEND,
+            .opcode     = mr ? opcode : IBV_WR_SEND,
             .send_flags = IBV_SEND_SIGNALED,
             .next       = NULL
     };
@@ -810,7 +814,7 @@ int handleGetEagerReq(struct pingpong_context *ctx, char * buffer) {
     memcpy(currBuff, &est, sizeof(enum msgType));
     strcpy(currBuff + sizeof(enum msgType), valueToSend);
     size_t msgSize = sizeof(enum msgType) + strlen(valueToSend) + 1;
-    pp_post_send(ctx, currBuff, msgSize, 128);
+    pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL);
 
     return 0;
 
@@ -823,7 +827,7 @@ int handleGetEagerReq(struct pingpong_context *ctx, char * buffer) {
  * @param buffer
  * @return
  */
-int handleSetEagerReq(struct pingpong_context *ctx, char * buffer) {
+int handleSetEagerReq(char * buffer) {
 
     char *key = (buffer + sizeof(enum msgType));
     size_t lenKey = strlen(key) + 1;
@@ -845,6 +849,30 @@ int handleSetEagerReq(struct pingpong_context *ctx, char * buffer) {
 }
 
 
+int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
+    // got curbuff = "type, mr_addr, mr_rkey, valueLen, key"
+
+    void * mr_addr;
+    uint32_t mr_rkey;
+    size_t  valueLen;
+    char *key = (buffer + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t) + sizeof(size_t));
+
+    memcpy(buffer + sizeof(enum msgType), &mr_addr, sizeof(void *));
+    memcpy(buffer + sizeof(enum msgType) + sizeof(void *), &mr_rkey, sizeof(uint32_t));
+    memcpy(buffer + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t), &valueLen, sizeof(size_t));
+
+
+    //TODO: 1. Hashmap set to key with empty string,
+    // 2. Malloc to value pointer
+    // 3. register to value pointer
+    // 4. pp_post_send with RDMA_READ !
+
+
+    return 0;
+
+}
+
+
 int HandleMsg(struct pingpong_context *ctx, char * infoBuf) {
 
     int type;
@@ -858,13 +886,13 @@ int HandleMsg(struct pingpong_context *ctx, char * infoBuf) {
             handleGetEagerReq(ctx, infoBuf);
             break;
         case EAGER_SET_REQUEST:
-            handleSetEagerReq(ctx, infoBuf);
+            handleSetEagerReq(infoBuf);
             break;
 //        case RENDEZVOUS_GET_REQUEST:
 //            handleGetEagerReq(ctx);
 //            break;
 //        case RENDEZVOUS_SET_REQUEST:
-//            handle_rendezvous_set_request(ctx);
+//            handleSetEagerReq(ctx);
 //            break;
         default:
             fprintf(stderr, "packet type = %d\n", type);
@@ -911,11 +939,11 @@ int serverLogic(struct pingpong_context *ctx) {
  * @param value
  * @return
  */
-int kv_get(void *kv_handle, const char *key, char **value){
+int kv_get(void *kv_handle, const char *key, char **value) {
     struct pingpong_context *ctx = (struct pingpong_context *) kv_handle;
     int buffToUse = getNextfreeBufNum(kv_handle);
 
-    char * currBuf = ctx->buf + (EAGER_MAX_SIZE * buffToUse);
+    char *currBuf = ctx->buf + (EAGER_MAX_SIZE * buffToUse);
     size_t keyLen = strlen(key) + 1;
 
     unsigned msgSize = sizeof(enum msgType) + keyLen;
@@ -928,14 +956,15 @@ int kv_get(void *kv_handle, const char *key, char **value){
         printf("kv_get: \n");
         printf("key is : %s\n", currBuf + sizeof(enum msgType));
 
-        pp_post_send(ctx, currBuf, msgSize, buffToUse);
-        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128); //waiting for completion in big buffer[128]
+        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL);
+        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE,
+                     128); //waiting for completion in big buffer[128]
         int id = clientWaitRecvCompletion(ctx); //id where the server response is
 
-        char * serverResponse = ctx->buf + (EAGER_MAX_SIZE * id);
+        char *serverResponse = ctx->buf + (EAGER_MAX_SIZE * id);
         int type;
         memcpy(&type, serverResponse, sizeof(int));
-        char * valFromServerAddr = serverResponse + sizeof(enum msgType);
+        char *valFromServerAddr = serverResponse + sizeof(enum msgType);
 
         switch (type) {
             case EAGER_GET_RESPONSE:
@@ -953,9 +982,7 @@ int kv_get(void *kv_handle, const char *key, char **value){
 
 
         return 0;
-    }
-
-    else {
+    } else {
         fprintf(stderr, "Invalid key size\n");
     }
 }
@@ -976,6 +1003,7 @@ int kv_set(void *kv_handle, const char *key, const char *value){
     size_t keyLen = strlen(key) + 1;
     size_t valueLen = strlen(value) + 1;
     unsigned msgSize = sizeof(enum msgType) + keyLen + valueLen ;
+
     if (msgSize <= EAGER_MAX_SIZE) { //eager
         int est = EAGER_SET_REQUEST;
         memcpy(currBuf, &est, sizeof(enum msgType));
@@ -984,14 +1012,48 @@ int kv_set(void *kv_handle, const char *key, const char *value){
 
         printf("key is : %s\n", currBuf + sizeof(enum msgType));
         printf("value is : %s\n", currBuf + sizeof(enum msgType) + keyLen);
-        pp_post_send(ctx, currBuf, msgSize, buffToUse);
+        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL);
         bufferMap[buffToUse] = 1; //make occupied
         return 0;
     }
 
-    else { //RENDEZ VOUZ
+    else { //RENDEZ VOUZ - key + value size > EAGER MAX SIZE
+        int type = RENDEZVOUS_SET_REQUEST;
+        memcpy(currBuf, &type, sizeof(enum msgType));
+
+
+        struct ibv_mr *mr = ibv_reg_mr(ctx->pd, currBuf, valueLen, IBV_ACCESS_REMOTE_READ);
+        if (!mr) {
+            fprintf(stderr, "Couldn't register MR\n");
+            return 1;
+        }
+
+        memcpy(currBuf + sizeof(enum msgType), &(mr->addr), sizeof(mr->addr));
+        memcpy(currBuf + sizeof(enum msgType) + sizeof(mr->addr), &(mr->rkey), sizeof(mr->rkey));
+        memcpy(currBuf + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)), &valueLen, sizeof(size_t));
+        strcpy(currBuf + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)) + sizeof(size_t), key); // curbuff = "type, mr_addr, mr_rkey, valueLen, key"
+        msgSize = sizeof(enum msgType) + sizeof(mr->addr) + sizeof(mr->rkey) + sizeof(size_t) + keyLen;
+
+        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL); // client sent to server the mr to read from
+        // wait for fin
+        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128); //waiting for completion in big buffer[128]
+        clientWaitRecvCompletion(ctx);
+
+        return 0;
+
     }
 }
+
+/**
+ * release the value that we did malloc to it
+ * @param value
+ */
+void kv_release(char *value){
+    // remember the valueptr to mr map - free that also.
+    free(value);
+}
+
+
 
 int main(int argc, char *argv[]) {
 
@@ -1018,6 +1080,7 @@ int main(int argc, char *argv[]) {
     if (!servername) {
         serverMap = hashmap_new();
         serverLogic(kv_handle);
+        valuePointerToMr = hashmap_new();
     }
     else {
         // client puts a key value pair
@@ -1026,6 +1089,7 @@ int main(int argc, char *argv[]) {
         kv_set((void *) kv_handle, key1, value1);
         kv_get((void *) kv_handle, key1, &valResponse);
         printf("Value Got from server is: %s", valResponse);
+        kv_release(valResponse);
     }
 
 
