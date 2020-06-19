@@ -564,7 +564,7 @@ static int pp_post_recv(struct pingpong_context *ctx, void * buf, unsigned long 
 }
 
 static int pp_post_send(struct pingpong_context *ctx, void * buf, unsigned long ourSize, int id,
-                        enum ibv_wr_opcode opcode, struct ibv_mr *mr) { //added unsigned long ourSize
+                        enum ibv_wr_opcode opcode, struct ibv_mr *mr, void * remotePtr, uint32_t rkey) { //added unsigned long ourSize
 
     struct ibv_sge list = {
 
@@ -581,6 +581,11 @@ static int pp_post_send(struct pingpong_context *ctx, void * buf, unsigned long 
             .send_flags = IBV_SEND_SIGNALED,
             .next       = NULL
     };
+
+    if (remotePtr) {
+        wr.wr.rdma.remote_addr = (uintptr_t) remotePtr;
+        wr.wr.rdma.rkey = rkey;
+    }
 
     return ibv_post_send(ctx->qp, &wr, &bad_wr);
 }
@@ -746,7 +751,7 @@ int kv_open(char * servername, void ** kv_handle){
 }
 
 
-int serverWaitRecvCompletion(struct pingpong_context* ctx, struct ibv_wc * wc){
+int waitPoolCompletion(struct pingpong_context* ctx, struct ibv_wc * wc){
     int ne;
     do {
         ne = ibv_poll_cq(ctx->cq, 1, wc);
@@ -765,7 +770,7 @@ int serverWaitRecvCompletion(struct pingpong_context* ctx, struct ibv_wc * wc){
 }
 
 
-int clientWaitRecvCompletion(struct pingpong_context* ctx){
+int waitRecvCompletion128(struct pingpong_context* ctx){
     struct ibv_wc wc;
     int ne;
     do {
@@ -796,7 +801,7 @@ int getNextfreeBufNum(struct pingpong_context* ctx){
             return i;
         }
     }
-    return serverWaitRecvCompletion(ctx, &wc);
+    return waitPoolCompletion(ctx, &wc);
 }
 
 /**
@@ -804,17 +809,46 @@ int getNextfreeBufNum(struct pingpong_context* ctx){
  * @param ctx
  * @return
  */
-int handleGetEagerReq(struct pingpong_context *ctx, char * buffer) {
+int handleGetReq(struct pingpong_context *ctx, char * buffer) {
 
     char *key = (buffer + sizeof(enum msgType));
     char * valueToSend;
+    char *currBuff = NULL;
     hashmap_get(serverMap, key, (any_t *) &valueToSend);
-    char * currBuff = ctx->buf + (128 * EAGER_MAX_SIZE);
-    int est = EAGER_GET_RESPONSE;
-    memcpy(currBuff, &est, sizeof(enum msgType));
-    strcpy(currBuff + sizeof(enum msgType), valueToSend);
-    size_t msgSize = sizeof(enum msgType) + strlen(valueToSend) + 1;
-    pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL);
+
+    if (strlen(valueToSend) <= EAGER_MAX_SIZE) {
+        currBuff = ctx->buf + (128 * EAGER_MAX_SIZE);
+        int est = EAGER_GET_RESPONSE;
+        memcpy(currBuff, &est, sizeof(enum msgType));
+        strcpy(currBuff + sizeof(enum msgType), valueToSend);
+        size_t msgSize = sizeof(enum msgType) + strlen(valueToSend) + 1;
+        pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL, NULL, 0);
+    }
+        //TODO: handle empty key cases eager + rdv
+        //RDV
+    else {
+        int type = RENDEZVOUS_GET_RESPONSE;
+        size_t valueLen = strlen(valueToSend);
+        memcpy(currBuff, &type, sizeof(enum msgType));
+
+        struct ibv_mr *mr;
+        hashmap_get(valuePointerToMr, valueToSend, (any_t *) &mr);
+
+
+        memcpy(currBuff + sizeof(enum msgType), &(mr->addr), sizeof(mr->addr));
+        memcpy(currBuff + sizeof(enum msgType) + sizeof(mr->addr), &(mr->rkey), sizeof(mr->rkey));
+        memcpy(currBuff + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)), &valueLen, sizeof(size_t));
+
+        size_t msgSize = sizeof(enum msgType) + sizeof(mr->addr) + sizeof(mr->rkey) + sizeof(size_t);
+
+        pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL, NULL, 0); //server sent the mr to read from to client
+        struct ibv_wc wc;
+        waitRecvCompletion128(ctx);
+        // wait for FIN
+        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128);
+        waitRecvCompletion128(ctx);
+
+    }
 
     return 0;
 
@@ -841,14 +875,13 @@ int handleSetEagerReq(char * buffer) {
     strcpy((char *) buf + lenKey, value);
 
     hashmap_put(serverMap, buf, buf + lenKey);
-    printf("server \n");
-    printf("key is : %s\n", buf);
-    printf("value is : %s\n", buf + lenKey);
+    printf("key is : %s\n", buf); //server
+    printf("value is : %s\n", buf + lenKey); //server
 
     return 0;
 }
 
-
+//server
 int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     // got curbuff = "type, mr_addr, mr_rkey, valueLen, key"
 
@@ -857,16 +890,30 @@ int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     size_t  valueLen;
     char *key = (buffer + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t) + sizeof(size_t));
 
-    memcpy(buffer + sizeof(enum msgType), &mr_addr, sizeof(void *));
-    memcpy(buffer + sizeof(enum msgType) + sizeof(void *), &mr_rkey, sizeof(uint32_t));
-    memcpy(buffer + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t), &valueLen, sizeof(size_t));
 
+    memcpy(&mr_addr, buffer + sizeof(enum msgType), sizeof(void *));
+    memcpy(&mr_rkey, buffer + sizeof(enum msgType) + sizeof(void *), sizeof(uint32_t));
+    memcpy(&valueLen, buffer + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t), sizeof(size_t));
 
-    //TODO: 1. Hashmap set to key with empty string,
-    // 2. Malloc to value pointer
-    // 3. register to value pointer
-    // 4. pp_post_send with RDMA_READ !
+    char * value = malloc(valueLen);
+    hashmap_put(serverMap, key, value); //1. Hashmap set to key with empty string,
+    struct  ibv_mr * valueMr = ibv_reg_mr(ctx->pd, value, valueLen, IBV_ACCESS_LOCAL_WRITE); //will write there the value after reading from client
 
+    if (pp_post_send(ctx, value, valueLen, 128, IBV_WR_RDMA_READ, valueMr, mr_addr, mr_rkey)){
+        fprintf(stderr, "RDV set Server: Error in sending mr address of server to client");
+    }
+    printf("The address got from client is: %p\n", mr_addr);
+    waitRecvCompletion128(ctx); //TODO: maybe send valueMR ??????
+
+    //send FIN to client
+    if (pp_post_send(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128, -1, NULL, NULL, 0)){
+        fprintf(stderr, "RDV set Server: Error in sending FIN to client");
+    }
+    waitRecvCompletion128(ctx);
+
+//    printf("Test val is: %d", value);
+//    fflush(stdout);
+    hashmap_put(valuePointerToMr, value, valueMr);
 
     return 0;
 
@@ -877,23 +924,23 @@ int HandleMsg(struct pingpong_context *ctx, char * infoBuf) {
 
     int type;
     memcpy(&type, infoBuf, sizeof(int));
-    printf( "ctx buf = %s\n", ctx->buf);
-    printf( "type = %d\n", type);
+//    printf( "ctx buf = %s\n", ctx->buf);
+//    printf( "type = %d\n", type);
 //    printf( "ctx buf = %s\n", infoBuf);
 
     switch (type) {
         case EAGER_GET_REQUEST:
-            handleGetEagerReq(ctx, infoBuf);
+            handleGetReq(ctx, infoBuf);
             break;
         case EAGER_SET_REQUEST:
             handleSetEagerReq(infoBuf);
             break;
 //        case RENDEZVOUS_GET_REQUEST:
-//            handleGetEagerReq(ctx);
+//            handleGetReq(ctx);
 //            break;
-//        case RENDEZVOUS_SET_REQUEST:
-//            handleSetEagerReq(ctx);
-//            break;
+        case RENDEZVOUS_SET_REQUEST:
+            handleSetRdvReq(ctx, infoBuf);
+            break;
         default:
             fprintf(stderr, "packet type = %d\n", type);
             break;
@@ -914,7 +961,7 @@ int serverLogic(struct pingpong_context *ctx) {
 
     while (1) {
 
-        int id = serverWaitRecvCompletion(ctx, &wc);
+        int id = waitPoolCompletion(ctx, &wc);
 
         if (wc.status != IBV_WC_SUCCESS) {
             fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
@@ -953,18 +1000,22 @@ int kv_get(void *kv_handle, const char *key, char **value) {
         memcpy(currBuf, &est, sizeof(enum msgType));
         strcpy(currBuf + sizeof(enum msgType), key);
 
-        printf("kv_get: \n");
-        printf("key is : %s\n", currBuf + sizeof(enum msgType));
+//        printf("kv_get: \n");
+//        printf("key is : %s\n", currBuf + sizeof(enum msgType));
 
-        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL);
+        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL, NULL, 0);
         pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE,
                      128); //waiting for completion in big buffer[128]
-        int id = clientWaitRecvCompletion(ctx); //id where the server response is
+        int id = waitRecvCompletion128(ctx); //id where the server response is
 
         char *serverResponse = ctx->buf + (EAGER_MAX_SIZE * id);
         int type;
         memcpy(&type, serverResponse, sizeof(int));
         char *valFromServerAddr = serverResponse + sizeof(enum msgType);
+
+        void * mr_addr;
+        uint32_t mr_rkey;
+        size_t  valueLen;
 
         switch (type) {
             case EAGER_GET_RESPONSE:
@@ -972,14 +1023,33 @@ int kv_get(void *kv_handle, const char *key, char **value) {
                 strcpy(*value, valFromServerAddr);
                 break;
 
-//        case RENDEZVOUS_GET_RESPONSE:
-//            handleGetEagerReq(ctx);
-//            break;
+            case RENDEZVOUS_GET_RESPONSE:
+
+                memcpy(&mr_addr, serverResponse + sizeof(enum msgType), sizeof(void *));
+                memcpy(&mr_rkey, serverResponse + sizeof(enum msgType) + sizeof(void *), sizeof(uint32_t));
+                memcpy(&valueLen, serverResponse + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t), sizeof(size_t));
+                *value = malloc(valueLen);
+                struct  ibv_mr * valueMr = ibv_reg_mr(ctx->pd, *value, valueLen, IBV_ACCESS_LOCAL_WRITE); //will write there the value after reading from client
+
+                if (pp_post_send(ctx, *value, valueLen, 128, IBV_WR_RDMA_READ, valueMr, mr_addr, mr_rkey)){
+                    fprintf(stderr, "RDV get Client: Error in reading mr of server");
+                }
+                printf("The address got from client is: %p\n", mr_addr);
+                waitRecvCompletion128(ctx); //TODO: maybe send valueMR ??????
+
+                //send FIN to server
+                if (pp_post_send(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128, -1, NULL, NULL, 0)){
+                    fprintf(stderr, "RDV set Server: Error in sending FIN to client");
+                }
+                waitRecvCompletion128(ctx);
+
+
+
+                break;
             default:
                 fprintf(stderr, "packet type = %d\n", type);
                 break;
         }
-
 
         return 0;
     } else {
@@ -988,7 +1058,7 @@ int kv_get(void *kv_handle, const char *key, char **value) {
 }
 
 /**
- *
+ * client function
  * @param kv_handle
  * @param key
  * @param value
@@ -1010,9 +1080,9 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         strcpy(currBuf + sizeof(enum msgType), key);
         strcpy(currBuf + sizeof(enum msgType) + keyLen, value);
 
-        printf("key is : %s\n", currBuf + sizeof(enum msgType));
-        printf("value is : %s\n", currBuf + sizeof(enum msgType) + keyLen);
-        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL);
+        printf("key is : %s\n", currBuf + sizeof(enum msgType)); //client
+        printf("value is : %s\n", currBuf + sizeof(enum msgType) + keyLen); //client
+        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL, NULL, 0);
         bufferMap[buffToUse] = 1; //make occupied
         return 0;
     }
@@ -1034,10 +1104,13 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         strcpy(currBuf + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)) + sizeof(size_t), key); // curbuff = "type, mr_addr, mr_rkey, valueLen, key"
         msgSize = sizeof(enum msgType) + sizeof(mr->addr) + sizeof(mr->rkey) + sizeof(size_t) + keyLen;
 
-        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL); // client sent to server the mr to read from
+        printf("The Client Good address is: %p\n", mr->addr);
+        pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL, NULL, 0); // client sent to server the mr to read from
+        struct ibv_wc wc;
+        waitPoolCompletion(ctx, &wc);
         // wait for fin
-        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128); //waiting for completion in big buffer[128]
-        clientWaitRecvCompletion(ctx);
+        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128);
+        waitRecvCompletion128(ctx);
 
         return 0;
 
@@ -1050,6 +1123,7 @@ int kv_set(void *kv_handle, const char *key, const char *value){
  */
 void kv_release(char *value){
     // remember the valueptr to mr map - free that also.
+    //    ibv_dereg_mr(valueMr);
     free(value);
 }
 
@@ -1064,6 +1138,11 @@ int main(int argc, char *argv[]) {
     char * value1 = "Gil the king";
     char * key2 = "KEYYY";
     char * value2 = "VALLLLL";
+    char bigVal [10001];
+    memset(bigVal, '1', 10000);
+    memset(bigVal + 10000, '\0', 1);
+
+
     char * valResponse;
     if (optind == argc - 1)
         servername = strdup(argv[optind]);
@@ -1079,18 +1158,26 @@ int main(int argc, char *argv[]) {
 
     if (!servername) {
         serverMap = hashmap_new();
-        serverLogic(kv_handle);
         valuePointerToMr = hashmap_new();
+        serverLogic(kv_handle);
     }
     else {
         // client puts a key value pair
-        kv_set((void *) kv_handle, key1, value1);
-        kv_set((void *) kv_handle, key2, value2);
-        kv_set((void *) kv_handle, key1, value1);
+//        kv_set((void *) kv_handle, key1, value1);
+//        kv_set((void *) kv_handle, key2, value2);
+//        kv_set((void *) kv_handle, key1, value1);
+//        kv_get((void *) kv_handle, key1, &valResponse);
+//        printf("Value Got from server is: %s\n", valResponse);
+//        kv_get((void *) kv_handle, key1, &valResponse);
+//        kv_release(valResponse);
+
+        printf("############################# RDV TESTS #############################\n");
+        //RDV TESTS
+        kv_set((void *) kv_handle, key1, bigVal);
         kv_get((void *) kv_handle, key1, &valResponse);
-        printf("Value Got from server is: %s", valResponse);
-        kv_release(valResponse);
+        printf("The value got from server: %s\n", valResponse);
     }
+
 
 
     return 0;
