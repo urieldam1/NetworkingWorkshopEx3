@@ -813,37 +813,51 @@ int handleGetReq(struct pingpong_context *ctx, char * buffer) {
 
     char *key = (buffer + sizeof(enum msgType));
     char * valueToSend;
-    char *currBuff = NULL;
+
+//    char *currBuff = NULL; not good - cause Segfault
+    char *currBuff = ctx->buf + (128 * EAGER_MAX_SIZE); // for INFO msg
+
     hashmap_get(serverMap, key, (any_t *) &valueToSend);
 
+
     if (strlen(valueToSend) <= EAGER_MAX_SIZE) {
-        currBuff = ctx->buf + (128 * EAGER_MAX_SIZE);
         int est = EAGER_GET_RESPONSE;
         memcpy(currBuff, &est, sizeof(enum msgType));
         strcpy(currBuff + sizeof(enum msgType), valueToSend);
         size_t msgSize = sizeof(enum msgType) + strlen(valueToSend) + 1;
         pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL, NULL, 0);
+        waitRecvCompletion128(ctx); // TODO: check if necessary
     }
         //TODO: handle empty key cases eager + rdv
         //RDV
     else {
         int type = RENDEZVOUS_GET_RESPONSE;
-        size_t valueLen = strlen(valueToSend);
+        size_t valueLen = strlen(valueToSend) + 1;
+
+        // starting build INFO msg
         memcpy(currBuff, &type, sizeof(enum msgType));
 
         struct ibv_mr *mr;
         hashmap_get(valuePointerToMr, valueToSend, (any_t *) &mr);
 
-
         memcpy(currBuff + sizeof(enum msgType), &(mr->addr), sizeof(mr->addr));
         memcpy(currBuff + sizeof(enum msgType) + sizeof(mr->addr), &(mr->rkey), sizeof(mr->rkey));
         memcpy(currBuff + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)), &valueLen, sizeof(size_t));
 
+        printf("blablabla\n");
+        printf("mr_addr is: %p\n", mr->addr);
+        printf("mr_rkey is: %lu\n", mr->rkey);
+        printf("valueLen is: %lu\n", valueLen);
+        printf("blablabla\n");
+
+
         size_t msgSize = sizeof(enum msgType) + sizeof(mr->addr) + sizeof(mr->rkey) + sizeof(size_t);
 
+        printf("GET msg value pointer adrress is: %p\n", mr->addr);
+
         pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL, NULL, 0); //server sent the mr to read from to client
-        struct ibv_wc wc;
         waitRecvCompletion128(ctx);
+
         // wait for FIN
         pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128);
         waitRecvCompletion128(ctx);
@@ -885,6 +899,7 @@ int handleSetEagerReq(char * buffer) {
 int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     // got curbuff = "type, mr_addr, mr_rkey, valueLen, key"
 
+    printf("Info msg pointer is: %p\n",buffer);
     void * mr_addr;
     uint32_t mr_rkey;
     size_t  valueLen;
@@ -896,13 +911,17 @@ int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     memcpy(&valueLen, buffer + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t), sizeof(size_t));
 
     char * value = malloc(valueLen);
+
+    printf("SET Msg value pointer address is: %p", value);
+
+
     hashmap_put(serverMap, key, value); //1. Hashmap set to key with empty string,
-    struct  ibv_mr * valueMr = ibv_reg_mr(ctx->pd, value, valueLen, IBV_ACCESS_LOCAL_WRITE); //will write there the value after reading from client
+    struct  ibv_mr * valueMr = ibv_reg_mr(ctx->pd, value, valueLen, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ); //will write there the value after reading from client
 
     if (pp_post_send(ctx, value, valueLen, 128, IBV_WR_RDMA_READ, valueMr, mr_addr, mr_rkey)){
         fprintf(stderr, "RDV set Server: Error in sending mr address of server to client");
     }
-    printf("The address got from client is: %p\n", mr_addr);
+    printf("The value address got from client is: %p\n", mr_addr);
     waitRecvCompletion128(ctx); //TODO: maybe send valueMR ??????
 
     //send FIN to client
@@ -911,8 +930,10 @@ int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     }
     waitRecvCompletion128(ctx);
 
-//    printf("Test val is: %d", value);
-//    fflush(stdout);
+    printf("Test val is: %s\n", value);
+    fflush(stdout);
+
+
     hashmap_put(valuePointerToMr, value, valueMr);
 
     return 0;
@@ -960,16 +981,13 @@ int serverLogic(struct pingpong_context *ctx) {
     }
 
     while (1) {
-
         int id = waitPoolCompletion(ctx, &wc);
-
         if (wc.status != IBV_WC_SUCCESS) {
             fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
                     ibv_wc_status_str(wc.status),
                     wc.status, (int) wc.wr_id);
             return 1;
         }
-
         if ((int) wc.wr_id < 128) {
             HandleMsg(ctx, ctx->buf + (EAGER_MAX_SIZE * wc.wr_id));
             int nextFreeBuff = getNextfreeBufNum(ctx);
@@ -1028,23 +1046,29 @@ int kv_get(void *kv_handle, const char *key, char **value) {
                 memcpy(&mr_addr, serverResponse + sizeof(enum msgType), sizeof(void *));
                 memcpy(&mr_rkey, serverResponse + sizeof(enum msgType) + sizeof(void *), sizeof(uint32_t));
                 memcpy(&valueLen, serverResponse + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t), sizeof(size_t));
+
+                printf("mr_addr is: %p\n", mr_addr);
+                printf("mr_rkey is: %lu\n", mr_rkey);
+                printf("valueLen is: %lu\n", valueLen);
+
                 *value = malloc(valueLen);
+                // TODO: Changed from IBV_ACCESS_LOCAL_WRITE to IBV_ACCESS_REMOTE_READ - OK????
                 struct  ibv_mr * valueMr = ibv_reg_mr(ctx->pd, *value, valueLen, IBV_ACCESS_LOCAL_WRITE); //will write there the value after reading from client
 
                 if (pp_post_send(ctx, *value, valueLen, 128, IBV_WR_RDMA_READ, valueMr, mr_addr, mr_rkey)){
                     fprintf(stderr, "RDV get Client: Error in reading mr of server");
                 }
-                printf("The address got from client is: %p\n", mr_addr);
+                printf("The address got from server is: %p\n", mr_addr);
                 waitRecvCompletion128(ctx); //TODO: maybe send valueMR ??????
+
+                printf("Value is: %s\n", *value);
+                fflush(stdout);
 
                 //send FIN to server
                 if (pp_post_send(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128, -1, NULL, NULL, 0)){
                     fprintf(stderr, "RDV set Server: Error in sending FIN to client");
                 }
                 waitRecvCompletion128(ctx);
-
-
-
                 break;
             default:
                 fprintf(stderr, "packet type = %d\n", type);
@@ -1092,7 +1116,7 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         memcpy(currBuf, &type, sizeof(enum msgType));
 
 
-        struct ibv_mr *mr = ibv_reg_mr(ctx->pd, currBuf, valueLen, IBV_ACCESS_REMOTE_READ);
+        struct ibv_mr *mr = ibv_reg_mr(ctx->pd, value, valueLen, IBV_ACCESS_REMOTE_READ);
         if (!mr) {
             fprintf(stderr, "Couldn't register MR\n");
             return 1;
@@ -1104,10 +1128,12 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         strcpy(currBuf + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)) + sizeof(size_t), key); // curbuff = "type, mr_addr, mr_rkey, valueLen, key"
         msgSize = sizeof(enum msgType) + sizeof(mr->addr) + sizeof(mr->rkey) + sizeof(size_t) + keyLen;
 
-        printf("The Client Good address is: %p\n", mr->addr);
+        printf("The Client Value address is: %p\n", value);
         pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL, NULL, 0); // client sent to server the mr to read from
+
         struct ibv_wc wc;
         waitPoolCompletion(ctx, &wc);
+
         // wait for fin
         pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128);
         waitRecvCompletion128(ctx);
