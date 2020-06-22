@@ -65,6 +65,7 @@ enum {
 #define BUFFER_MAP_SIZE 128
 #define EAGER_MAX_SIZE 4096 // TODO: +20 ??
 #define MAX_SIZE  129 * 4096 // 128 for send, 1 for recv
+#define MAX_SIZE  129 * 4096 // 128 for send, 1 for recv
 #define MICRO_SEC  1e6
 #define BYTE_TO_BIT  8
 #define WARMUP_NUM_OF_SENDS  5000
@@ -769,6 +770,26 @@ int waitPoolCompletion(struct pingpong_context* ctx, struct ibv_wc * wc){
     } while (ne < 1);
 }
 
+int waitFINCompletion(struct pingpong_context* ctx){
+    struct ibv_wc wc;
+    int ne;
+    do {
+        ne = ibv_poll_cq(ctx->cq, 1, &wc);
+        if (ne == 1) {
+            if (strcmp(ctx->buf + (wc.wr_id * EAGER_MAX_SIZE),"FIN") == 0){
+                return 0;
+            }
+            else {
+                ne = 0;}
+        }
+        else if (ne < 0){
+            fprintf(stderr, "poll CQ failed %d\n", ne);
+            return -1;
+        }
+    }
+        while (ne < 1);
+}
+
 
 int waitRecvCompletion128(struct pingpong_context* ctx){
     struct ibv_wc wc;
@@ -813,11 +834,11 @@ int handleGetReq(struct pingpong_context *ctx, char * buffer) {
 
     char *key = (buffer + sizeof(enum msgType));
     char * valueToSend;
-
-//    char *currBuff = NULL; not good - cause Segfault
     char *currBuff = ctx->buf + (128 * EAGER_MAX_SIZE); // for INFO msg
 
-    hashmap_get(serverMap, key, (any_t *) &valueToSend);
+    if (hashmap_get(serverMap, key, (any_t *) &valueToSend) == MAP_MISSING){
+        valueToSend = "";
+    }
 
 
     if (strlen(valueToSend) <= EAGER_MAX_SIZE) {
@@ -828,7 +849,6 @@ int handleGetReq(struct pingpong_context *ctx, char * buffer) {
         pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL, NULL, 0);
         waitRecvCompletion128(ctx); // TODO: check if necessary
     }
-        //TODO: handle empty key cases eager + rdv
         //RDV
     else {
         int type = RENDEZVOUS_GET_RESPONSE;
@@ -844,23 +864,25 @@ int handleGetReq(struct pingpong_context *ctx, char * buffer) {
         memcpy(currBuff + sizeof(enum msgType) + sizeof(mr->addr), &(mr->rkey), sizeof(mr->rkey));
         memcpy(currBuff + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)), &valueLen, sizeof(size_t));
 
-        printf("blablabla\n");
-        printf("mr_addr is: %p\n", mr->addr);
-        printf("mr_rkey is: %lu\n", mr->rkey);
-        printf("valueLen is: %lu\n", valueLen);
-        printf("blablabla\n");
+//        printf("blablabla\n");
+//        printf("mr_addr is: %p\n", mr->addr);
+//        printf("mr_rkey is: %lu\n", mr->rkey);
+//        printf("valueLen is: %lu\n", valueLen);
+//        printf("blablabla\n");
 
 
         size_t msgSize = sizeof(enum msgType) + sizeof(mr->addr) + sizeof(mr->rkey) + sizeof(size_t);
 
-        printf("GET msg value pointer adrress is: %p\n", mr->addr);
+//        printf("GET msg value pointer adrress is: %p\n", mr->addr);
 
         pp_post_send(ctx, currBuff, msgSize, 128, -1, NULL, NULL, 0); //server sent the mr to read from to client
         waitRecvCompletion128(ctx);
 
         // wait for FIN
         pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128);
-        waitRecvCompletion128(ctx);
+        waitFINCompletion(ctx);
+//        waitRecvCompletion128(ctx);
+//        printf("HERE");
 
     }
 
@@ -889,8 +911,8 @@ int handleSetEagerReq(char * buffer) {
     strcpy((char *) buf + lenKey, value);
 
     hashmap_put(serverMap, buf, buf + lenKey);
-    printf("key is : %s\n", buf); //server
-    printf("value is : %s\n", buf + lenKey); //server
+//    printf("key is : %s\n", buf); //server
+//    printf("value is : %s\n", buf + lenKey); //server
 
     return 0;
 }
@@ -899,7 +921,7 @@ int handleSetEagerReq(char * buffer) {
 int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     // got curbuff = "type, mr_addr, mr_rkey, valueLen, key"
 
-    printf("Info msg pointer is: %p\n",buffer);
+//    printf("Info msg pointer is: %p\n",buffer);
     void * mr_addr;
     uint32_t mr_rkey;
     size_t  valueLen;
@@ -912,7 +934,7 @@ int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
 
     char * value = malloc(valueLen);
 
-    printf("SET Msg value pointer address is: %p", value);
+//    printf("SET Msg value pointer address is: %p", value);
 
 
     hashmap_put(serverMap, key, value); //1. Hashmap set to key with empty string,
@@ -921,7 +943,7 @@ int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     if (pp_post_send(ctx, value, valueLen, 128, IBV_WR_RDMA_READ, valueMr, mr_addr, mr_rkey)){
         fprintf(stderr, "RDV set Server: Error in sending mr address of server to client");
     }
-    printf("The value address got from client is: %p\n", mr_addr);
+//    printf("The value address got from client is: %p\n", mr_addr);
     waitRecvCompletion128(ctx); //TODO: maybe send valueMR ??????
 
     //send FIN to client
@@ -930,7 +952,7 @@ int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
     }
     waitRecvCompletion128(ctx);
 
-    printf("Test val is: %s\n", value);
+//    printf("Test val is: %s\n", value);
     fflush(stdout);
 
 
@@ -1047,9 +1069,9 @@ int kv_get(void *kv_handle, const char *key, char **value) {
                 memcpy(&mr_rkey, serverResponse + sizeof(enum msgType) + sizeof(void *), sizeof(uint32_t));
                 memcpy(&valueLen, serverResponse + sizeof(enum msgType) + sizeof(void *) + sizeof(uint32_t), sizeof(size_t));
 
-                printf("mr_addr is: %p\n", mr_addr);
-                printf("mr_rkey is: %lu\n", mr_rkey);
-                printf("valueLen is: %lu\n", valueLen);
+//                printf("mr_addr is: %p\n", mr_addr);
+//                printf("mr_rkey is: %lu\n", mr_rkey);
+//                printf("valueLen is: %lu\n", valueLen);
 
                 *value = malloc(valueLen);
                 // TODO: Changed from IBV_ACCESS_LOCAL_WRITE to IBV_ACCESS_REMOTE_READ - OK????
@@ -1058,12 +1080,15 @@ int kv_get(void *kv_handle, const char *key, char **value) {
                 if (pp_post_send(ctx, *value, valueLen, 128, IBV_WR_RDMA_READ, valueMr, mr_addr, mr_rkey)){
                     fprintf(stderr, "RDV get Client: Error in reading mr of server");
                 }
-                printf("The address got from server is: %p\n", mr_addr);
+//                printf("The address got from server is: %p\n", mr_addr);
                 waitRecvCompletion128(ctx); //TODO: maybe send valueMR ??????
 
-                printf("Value is: %s\n", *value);
+//                printf("Value is: %s\n", *value);
                 fflush(stdout);
 
+
+
+                strcpy(ctx->buf + (128 * EAGER_MAX_SIZE), "FIN");
                 //send FIN to server
                 if (pp_post_send(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128, -1, NULL, NULL, 0)){
                     fprintf(stderr, "RDV set Server: Error in sending FIN to client");
@@ -1104,8 +1129,8 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         strcpy(currBuf + sizeof(enum msgType), key);
         strcpy(currBuf + sizeof(enum msgType) + keyLen, value);
 
-        printf("key is : %s\n", currBuf + sizeof(enum msgType)); //client
-        printf("value is : %s\n", currBuf + sizeof(enum msgType) + keyLen); //client
+//        printf("key is : %s\n", currBuf + sizeof(enum msgType)); //client
+//        printf("value is : %s\n", currBuf + sizeof(enum msgType) + keyLen); //client
         pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL, NULL, 0);
         bufferMap[buffToUse] = 1; //make occupied
         return 0;
@@ -1128,7 +1153,7 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         strcpy(currBuf + sizeof(enum msgType) + sizeof(mr->addr) + sizeof((mr->rkey)) + sizeof(size_t), key); // curbuff = "type, mr_addr, mr_rkey, valueLen, key"
         msgSize = sizeof(enum msgType) + sizeof(mr->addr) + sizeof(mr->rkey) + sizeof(size_t) + keyLen;
 
-        printf("The Client Value address is: %p\n", value);
+//        printf("The Client Value address is: %p\n", value);
         pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL, NULL, 0); // client sent to server the mr to read from
 
         struct ibv_wc wc;
@@ -1153,6 +1178,89 @@ void kv_release(char *value){
     free(value);
 }
 
+int througputSetTest(void * kv_handle){
+    char key[100];
+    size_t size = 1;
+    unsigned long iters = 20;
+    char * value = malloc((unsigned long) pow(2,20));
+    printf("############################# SET #############################\n");
+
+    for (int i = 0; i < 16; i++){
+        memset(value, '1', size);
+        memset(value + size, '\0', 1);
+        memset(key, i + 48, 1);
+        memset(key + 1, '\0', 1);
+        // open timer
+        struct timeval start, end;
+        if (gettimeofday(&start, NULL)) {
+            perror("gettimeofday");
+            return -1;
+        }
+        for (unsigned long j = 0; j < iters; j ++){
+            kv_set(kv_handle, key, value);
+        }
+
+        // close timer
+        if (gettimeofday(&end, NULL)) {
+            perror("gettimeofday");
+            return -1;
+        }
+        __suseconds_t usec = (((end.tv_sec - start.tv_sec) * (__suseconds_t) MICRO_SEC +
+                               (end.tv_usec - start.tv_usec)));
+
+        unsigned long total_bit = size * iters * BYTE_TO_BIT;
+        unsigned long throughput = total_bit / usec;
+        if (usec < 0) {
+            printf("Error in client send message func");
+        }
+        printf("%lu\t%lu\tMbps\n", size, throughput);
+        fflush(stdout);
+        size = size * 2;
+    }
+    return 0;
+}
+
+
+int througputGetTest(void * kv_handle){
+    char key[100];
+    size_t size = 1;
+    unsigned long iters = 20;
+    char * value;
+    printf("############################# GET #############################\n");
+
+    for (int i = 0; i < 16; i++){
+        memset(key, i + 48, 1);
+        memset(key + 1, '\0', 1);
+        // open timer
+        struct timeval start, end;
+        if (gettimeofday(&start, NULL)) {
+            perror("gettimeofday");
+            return -1;
+        }
+        for (unsigned long j = 0; j < iters; j ++){
+            kv_get(kv_handle, key, &value);
+        }
+
+        // close timer
+        if (gettimeofday(&end, NULL)) {
+            perror("gettimeofday");
+            return -1;
+        }
+        __suseconds_t usec = (((end.tv_sec - start.tv_sec) * (__suseconds_t) MICRO_SEC +
+                               (end.tv_usec - start.tv_usec)));
+
+        unsigned long total_bit = size * iters * BYTE_TO_BIT;
+        unsigned long throughput = total_bit / usec;
+        if (usec < 0) {
+            printf("Error in client send message func");
+        }
+        printf("%lu\t%lu\tMbps\n", size, throughput);
+        fflush(stdout);
+        size = size * 2;
+    }
+    return 0;
+}
+
 
 
 int main(int argc, char *argv[]) {
@@ -1165,7 +1273,7 @@ int main(int argc, char *argv[]) {
     char * key2 = "KEYYY";
     char * value2 = "VALLLLL";
     char bigVal [10001];
-    memset(bigVal, '1', 10000);
+    memset(bigVal, '2', 10000);
     memset(bigVal + 10000, '\0', 1);
 
 
@@ -1189,19 +1297,23 @@ int main(int argc, char *argv[]) {
     }
     else {
         // client puts a key value pair
-//        kv_set((void *) kv_handle, key1, value1);
-//        kv_set((void *) kv_handle, key2, value2);
-//        kv_set((void *) kv_handle, key1, value1);
-//        kv_get((void *) kv_handle, key1, &valResponse);
-//        printf("Value Got from server is: %s\n", valResponse);
-//        kv_get((void *) kv_handle, key1, &valResponse);
-//        kv_release(valResponse);
 
-        printf("############################# RDV TESTS #############################\n");
+//        kv_set((void *) kv_handle, key1, value2);
+//        kv_get((void *) kv_handle, key1, &valResponse);
+//        printf("Value Got from server is: %s\n", valResponse); // expected: VALLLLLL
+//
+//        kv_set((void *) kv_handle, key1, bigVal);
+//        kv_get((void *) kv_handle, key1, &valResponse);
+//        printf("Value Got from server is: %s\n", valResponse); // expected:  "222222222";
+
+        througputSetTest(kv_handle);
+        througputGetTest(kv_handle);
+        printf("############################# END #############################\n");
+
         //RDV TESTS
-        kv_set((void *) kv_handle, key1, bigVal);
-        kv_get((void *) kv_handle, key1, &valResponse);
-        printf("The value got from server: %s\n", valResponse);
+//        kv_set((void *) kv_handle, key1, bigVal);
+//        kv_get((void *) kv_handle, key1, &valResponse);
+//        printf("The value got from server: %s\n", valResponse);
     }
 
 
