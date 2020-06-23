@@ -55,7 +55,8 @@
 
 #define WC_BATCH (10)
 #define _GNU_SOURCE
-#define ITERS 5555
+#define ITERS 10
+#define MAX_ITERS 15
 
 enum {
     PINGPONG_RECV_WRID = 1,
@@ -657,7 +658,7 @@ int kv_open(char * servername, void ** kv_handle){
     struct pingpong_dest my_dest;
     struct pingpong_dest *rem_dest;
     char *ib_devname = NULL;
-    int port = 12327;
+    int port = 12346;
     int ib_port = 1;
     enum ibv_mtu mtu = IBV_MTU_2048;
     int rx_depth = 100;
@@ -751,6 +752,22 @@ int kv_open(char * servername, void ** kv_handle){
     return 0;
 }
 
+int waitGeneralCompletion(struct pingpong_context* ctx){
+    int ne;
+    struct ibv_wc wc;
+    do {
+        ne = ibv_poll_cq(ctx->cq, 1, &wc);
+        if (ne == 1) {
+            bufferMap[wc.wr_id] = 0;
+            return wc.wr_id;
+        }
+        else if (ne < 0){
+            fprintf(stderr, "poll CQ failed %d\n", ne);
+            return -1;
+        }
+
+    } while (ne < 1);
+}
 
 int waitPoolCompletion(struct pingpong_context* ctx, struct ibv_wc * wc){
     int ne;
@@ -758,6 +775,7 @@ int waitPoolCompletion(struct pingpong_context* ctx, struct ibv_wc * wc){
         ne = ibv_poll_cq(ctx->cq, 1, wc);
         if (ne == 1) {
             if (wc->wr_id < 128){
+                bufferMap[wc->wr_id] = 0;
                 return wc->wr_id;
             }
             ne = 0;
@@ -777,6 +795,7 @@ int waitFINCompletion(struct pingpong_context* ctx){
         ne = ibv_poll_cq(ctx->cq, 1, &wc);
         if (ne == 1) {
             if (strcmp(ctx->buf + (wc.wr_id * EAGER_MAX_SIZE),"FIN") == 0){
+                bufferMap[wc.wr_id] = 0;
                 return 0;
             }
             else {
@@ -946,11 +965,13 @@ int handleSetRdvReq(struct pingpong_context *ctx, char * buffer) {
 //    printf("The value address got from client is: %p\n", mr_addr);
     waitRecvCompletion128(ctx); //TODO: maybe send valueMR ??????
 
-    //send FIN to client
+    strcpy(ctx->buf + (128 * EAGER_MAX_SIZE), "FIN");
+    //send FIN to server
     if (pp_post_send(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128, -1, NULL, NULL, 0)){
         fprintf(stderr, "RDV set Server: Error in sending FIN to client");
     }
-    waitRecvCompletion128(ctx);
+//    waitRecvCompletion128(ctx);
+    waitFINCompletion(ctx);
 
 //    printf("Test val is: %s\n", value);
     fflush(stdout);
@@ -1044,8 +1065,7 @@ int kv_get(void *kv_handle, const char *key, char **value) {
 //        printf("key is : %s\n", currBuf + sizeof(enum msgType));
 
         pp_post_send(ctx, currBuf, msgSize, buffToUse, -1, NULL, NULL, 0);
-        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE,
-                     128); //waiting for completion in big buffer[128]
+        pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE,128); //waiting for completion in big buffer[128]
         int id = waitRecvCompletion128(ctx); //id where the server response is
 
         char *serverResponse = ctx->buf + (EAGER_MAX_SIZE * id);
@@ -1059,7 +1079,7 @@ int kv_get(void *kv_handle, const char *key, char **value) {
 
         switch (type) {
             case EAGER_GET_RESPONSE:
-                *value = malloc(sizeof(valFromServerAddr));
+                *value = malloc(strlen(valFromServerAddr));
                 strcpy(*value, valFromServerAddr);
                 break;
 
@@ -1159,7 +1179,7 @@ int kv_set(void *kv_handle, const char *key, const char *value){
         struct ibv_wc wc;
         waitPoolCompletion(ctx, &wc);
 
-        // wait for fin
+        // wait for Fin
         pp_post_recv(ctx, ctx->buf + (128 * EAGER_MAX_SIZE), EAGER_MAX_SIZE, 128);
         waitRecvCompletion128(ctx);
 
@@ -1181,11 +1201,10 @@ void kv_release(char *value){
 int througputSetTest(void * kv_handle){
     char key[100];
     size_t size = 1;
-    unsigned long iters = 20;
     char * value = malloc((unsigned long) pow(2,20));
-    printf("############################# SET #############################\n");
+    printf("############################# SET - SHORT MSGS #############################\n");
 
-    for (int i = 0; i < 16; i++){
+    for (int i = 0; i < MAX_ITERS; i++){
         memset(value, '1', size);
         memset(value + size, '\0', 1);
         memset(key, i + 48, 1);
@@ -1196,7 +1215,7 @@ int througputSetTest(void * kv_handle){
             perror("gettimeofday");
             return -1;
         }
-        for (unsigned long j = 0; j < iters; j ++){
+        for (unsigned long j = 0; j < ITERS; j ++){
             kv_set(kv_handle, key, value);
         }
 
@@ -1208,7 +1227,7 @@ int througputSetTest(void * kv_handle){
         __suseconds_t usec = (((end.tv_sec - start.tv_sec) * (__suseconds_t) MICRO_SEC +
                                (end.tv_usec - start.tv_usec)));
 
-        unsigned long total_bit = size * iters * BYTE_TO_BIT;
+        unsigned long total_bit = size * ITERS * BYTE_TO_BIT;
         unsigned long throughput = total_bit / usec;
         if (usec < 0) {
             printf("Error in client send message func");
@@ -1224,11 +1243,10 @@ int througputSetTest(void * kv_handle){
 int througputGetTest(void * kv_handle){
     char key[100];
     size_t size = 1;
-    unsigned long iters = 20;
     char * value;
     printf("############################# GET #############################\n");
 
-    for (int i = 0; i < 16; i++){
+    for (int i = 0; i < MAX_ITERS; i++){
         memset(key, i + 48, 1);
         memset(key + 1, '\0', 1);
         // open timer
@@ -1237,7 +1255,7 @@ int througputGetTest(void * kv_handle){
             perror("gettimeofday");
             return -1;
         }
-        for (unsigned long j = 0; j < iters; j ++){
+        for (unsigned long j = 0; j < ITERS; j ++){
             kv_get(kv_handle, key, &value);
         }
 
@@ -1249,7 +1267,7 @@ int througputGetTest(void * kv_handle){
         __suseconds_t usec = (((end.tv_sec - start.tv_sec) * (__suseconds_t) MICRO_SEC +
                                (end.tv_usec - start.tv_usec)));
 
-        unsigned long total_bit = size * iters * BYTE_TO_BIT;
+        unsigned long total_bit = size * ITERS * BYTE_TO_BIT;
         unsigned long throughput = total_bit / usec;
         if (usec < 0) {
             printf("Error in client send message func");
@@ -1301,10 +1319,15 @@ int main(int argc, char *argv[]) {
 //        kv_set((void *) kv_handle, key1, value2);
 //        kv_get((void *) kv_handle, key1, &valResponse);
 //        printf("Value Got from server is: %s\n", valResponse); // expected: VALLLLLL
-//
+
 //        kv_set((void *) kv_handle, key1, bigVal);
+//        kv_set((void *) kv_handle, key2, bigVal);
 //        kv_get((void *) kv_handle, key1, &valResponse);
 //        printf("Value Got from server is: %s\n", valResponse); // expected:  "222222222";
+//        kv_get((void *) kv_handle, key2, &valResponse);
+//        printf("Value Got from server is: %s\n", valResponse); // expected:  "222222222";
+
+
 
         througputSetTest(kv_handle);
         througputGetTest(kv_handle);
