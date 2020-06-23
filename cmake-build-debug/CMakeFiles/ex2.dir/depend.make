@@ -4,7 +4,7 @@
 CMakeFiles/ex2.dir/HashMap.c.o: ../HashMap.c
 CMakeFiles/ex2.dir/HashMap.c.o: ../HashMap.h
 
-CMakeFiles/ex2.dir/bw_template.c.o: ../HashMap.h
-CMakeFiles/ex2.dir/bw_template.c.o: ../bw_template.c
-CMakeFiles/ex2.dir/bw_template.c.o: ../msgType.h
+CMakeFiles/ex2.dir/kv_template.c.o: ../HashMap.h
+CMakeFiles/ex2.dir/kv_template.c.o: ../kv_template.c
+CMakeFiles/ex2.dir/kv_template.c.o: ../msgType.h
 

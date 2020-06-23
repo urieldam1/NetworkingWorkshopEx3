@@ -5,7 +5,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 # The set of files for implicit dependencies of each language:
 set(CMAKE_DEPENDS_CHECK_C
   "/cs/usr/l33t/NetworkingWorkshopEx3/HashMap.c" "/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/ex2.dir/HashMap.c.o"
-  "/cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c" "/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/ex2.dir/bw_template.c.o"
+  "/cs/usr/l33t/NetworkingWorkshopEx3/kv_template.c" "/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles/ex2.dir/kv_template.c.o"
   )
 set(CMAKE_C_COMPILER_ID "GNU")
 

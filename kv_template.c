@@ -55,8 +55,8 @@
 
 #define WC_BATCH (10)
 #define _GNU_SOURCE
-#define ITERS 10
-#define MAX_ITERS 15
+#define ITERS 5555
+#define MAX_ITERS 10
 
 enum {
     PINGPONG_RECV_WRID = 1,

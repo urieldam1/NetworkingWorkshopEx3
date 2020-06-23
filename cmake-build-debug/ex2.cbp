@@ -82,7 +82,7 @@
 		<Unit filename="/cs/usr/l33t/NetworkingWorkshopEx3/HashMap.h">
 			<Option target="ex2"/>
 		</Unit>
-		<Unit filename="/cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c">
+		<Unit filename="/cs/usr/l33t/NetworkingWorkshopEx3/kv_template.c">
 			<Option target="ex2"/>
 		</Unit>
 		<Unit filename="/cs/usr/l33t/NetworkingWorkshopEx3/msgType.h">

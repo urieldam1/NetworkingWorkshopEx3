@@ -150,32 +150,32 @@ HashMap.c.s:
 	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/HashMap.c.s
 .PHONY : HashMap.c.s
 
-bw_template.o: bw_template.c.o
+kv_template.o: kv_template.c.o
 
-.PHONY : bw_template.o
+.PHONY : kv_template.o
 
 # target to build an object file
-bw_template.c.o:
-	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/bw_template.c.o
-.PHONY : bw_template.c.o
+kv_template.c.o:
+	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/kv_template.c.o
+.PHONY : kv_template.c.o
 
-bw_template.i: bw_template.c.i
+kv_template.i: kv_template.c.i
 
-.PHONY : bw_template.i
+.PHONY : kv_template.i
 
 # target to preprocess a source file
-bw_template.c.i:
-	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/bw_template.c.i
-.PHONY : bw_template.c.i
+kv_template.c.i:
+	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/kv_template.c.i
+.PHONY : kv_template.c.i
 
-bw_template.s: bw_template.c.s
+kv_template.s: kv_template.c.s
 
-.PHONY : bw_template.s
+.PHONY : kv_template.s
 
 # target to generate assembly for a file
-bw_template.c.s:
-	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/bw_template.c.s
-.PHONY : bw_template.c.s
+kv_template.c.s:
+	$(MAKE) -f CMakeFiles/ex2.dir/build.make CMakeFiles/ex2.dir/kv_template.c.s
+.PHONY : kv_template.c.s
 
 # Help Target
 help:
@@ -189,9 +189,9 @@ help:
 	@echo "... HashMap.o"
 	@echo "... HashMap.i"
 	@echo "... HashMap.s"
-	@echo "... bw_template.o"
-	@echo "... bw_template.i"
-	@echo "... bw_template.s"
+	@echo "... kv_template.o"
+	@echo "... kv_template.i"
+	@echo "... kv_template.s"
 .PHONY : help
 
 

@@ -57,18 +57,18 @@ include CMakeFiles/ex2.dir/progress.make
 # Include the compile flags for this target's objects.
 include CMakeFiles/ex2.dir/flags.make
 
-CMakeFiles/ex2.dir/bw_template.c.o: CMakeFiles/ex2.dir/flags.make
-CMakeFiles/ex2.dir/bw_template.c.o: ../bw_template.c
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object CMakeFiles/ex2.dir/bw_template.c.o"
-	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -o CMakeFiles/ex2.dir/bw_template.c.o   -c /cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c
+CMakeFiles/ex2.dir/kv_template.c.o: CMakeFiles/ex2.dir/flags.make
+CMakeFiles/ex2.dir/kv_template.c.o: ../kv_template.c
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/cs/usr/l33t/NetworkingWorkshopEx3/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object CMakeFiles/ex2.dir/kv_template.c.o"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -o CMakeFiles/ex2.dir/kv_template.c.o   -c /cs/usr/l33t/NetworkingWorkshopEx3/kv_template.c
 
-CMakeFiles/ex2.dir/bw_template.c.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing C source to CMakeFiles/ex2.dir/bw_template.c.i"
-	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c > CMakeFiles/ex2.dir/bw_template.c.i
+CMakeFiles/ex2.dir/kv_template.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing C source to CMakeFiles/ex2.dir/kv_template.c.i"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /cs/usr/l33t/NetworkingWorkshopEx3/kv_template.c > CMakeFiles/ex2.dir/kv_template.c.i
 
-CMakeFiles/ex2.dir/bw_template.c.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling C source to assembly CMakeFiles/ex2.dir/bw_template.c.s"
-	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c -o CMakeFiles/ex2.dir/bw_template.c.s
+CMakeFiles/ex2.dir/kv_template.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling C source to assembly CMakeFiles/ex2.dir/kv_template.c.s"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /cs/usr/l33t/NetworkingWorkshopEx3/kv_template.c -o CMakeFiles/ex2.dir/kv_template.c.s
 
 CMakeFiles/ex2.dir/HashMap.c.o: CMakeFiles/ex2.dir/flags.make
 CMakeFiles/ex2.dir/HashMap.c.o: ../HashMap.c
@@ -85,13 +85,13 @@ CMakeFiles/ex2.dir/HashMap.c.s: cmake_force
 
 # Object files for target ex2
 ex2_OBJECTS = \
-"CMakeFiles/ex2.dir/bw_template.c.o" \
+"CMakeFiles/ex2.dir/kv_template.c.o" \
 "CMakeFiles/ex2.dir/HashMap.c.o"
 
 # External object files for target ex2
 ex2_EXTERNAL_OBJECTS =
 
-ex2: CMakeFiles/ex2.dir/bw_template.c.o
+ex2: CMakeFiles/ex2.dir/kv_template.c.o
 ex2: CMakeFiles/ex2.dir/HashMap.c.o
 ex2: CMakeFiles/ex2.dir/build.make
 ex2: CMakeFiles/ex2.dir/link.txt

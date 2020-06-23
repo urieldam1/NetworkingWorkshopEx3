@@ -1,5 +1,5 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/ex2.dir/bw_template.c.o"
+  "CMakeFiles/ex2.dir/kv_template.c.o"
   "CMakeFiles/ex2.dir/HashMap.c.o"
   "ex2.pdb"
   "ex2"

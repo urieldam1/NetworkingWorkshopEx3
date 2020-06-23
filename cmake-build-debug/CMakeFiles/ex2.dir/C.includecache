@@ -8,7 +8,7 @@
 
 /cs/usr/l33t/NetworkingWorkshopEx3/HashMap.h
 
-/cs/usr/l33t/NetworkingWorkshopEx3/bw_template.c
+/cs/usr/l33t/NetworkingWorkshopEx3/kv_template.c
 assert.h
 -
 stdio.h
